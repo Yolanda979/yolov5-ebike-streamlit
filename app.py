@@ -1,182 +1,197 @@
-import streamlit as st
-import torch
-from PIL import Image
-from io import *
 import glob
-from datetime import datetime
-import os
+import streamlit as st
 import wget
-from video_predict import runVideo
+from PIL import Image
+import torch
+import cv2
+import os
+import time
+import ultralytics
+st.set_page_config(layout="wide")
+
+cfg_model_path = 'models/best.pt'
+model = None
+confidence = .25
 
 
-# Configurations
-CFG_MODEL_PATH = "models/best.pt"
-CFG_ENABLE_URL_DOWNLOAD = False
-CFG_ENABLE_VIDEO_PREDICTION = True
-if CFG_ENABLE_URL_DOWNLOAD:
-    # Configure this if you set cfg_enable_url_download to True
-    url = "https://archive.org/download/yoloTrained/yoloTrained.pt"
-# End of Configurations
+def image_input(data_src):
+    img_file = None
+    if data_src == 'Sample data':
+        # get all sample images
+        img_path = glob.glob('data/sample_images/*')
+        img_slider = st.slider("Select a test image.", min_value=1, max_value=len(img_path), step=1)
+        img_file = img_path[img_slider - 1]
+    else:
+        img_bytes = st.sidebar.file_uploader("Upload an image", type=['png', 'jpeg', 'jpg'])
+        if img_bytes:
+            img_file = "data/uploaded_data/upload." + img_bytes.name.split('.')[-1]
+            Image.open(img_bytes).save(img_file)
 
-
-def imageInput(model, src):
-
-    if src == 'Upload your own data.':
-        image_file = st.file_uploader(
-            "Upload An Image", type=['png', 'jpeg', 'jpg'])
-        col1, col2 = st.columns(2)
-        if image_file is not None:
-            img = Image.open(image_file)
-            with col1:
-                st.image(img, caption='Uploaded Image',
-                         use_column_width='always')
-            ts = datetime.timestamp(datetime.now())
-            imgpath = os.path.join('data/uploads', str(ts)+image_file.name)
-            outputpath = os.path.join(
-                'data/outputs', os.path.basename(imgpath))
-            with open(imgpath, mode="wb") as f:
-                f.write(image_file.getbuffer())
-
-            with st.spinner(text="Predicting..."):
-                # Load model
-                pred = model(imgpath)
-                pred.render()
-                # save output to file
-                for im in pred.ims:
-                    im_base64 = Image.fromarray(im)
-                    im_base64.save(outputpath)
-
-            # Predictions
-            img_ = Image.open(outputpath)
-            with col2:
-                st.image(img_, caption='Model Prediction(s)',
-                         use_column_width='always')
-
-    elif src == 'From example data.':
-        # Image selector slider
-        imgpaths = glob.glob('data/example_images/*')
-        if len(imgpaths) == 0:
-            st.write(".")
-            st.error(
-                'No images found, Please upload example images in data/example_images', icon="")
-            return
-        imgsel = st.slider('Select random images from example data.',
-                           min_value=1, max_value=len(imgpaths), step=1)
-        image_file = imgpaths[imgsel-1]
-        submit = st.button("Predict!")
+    if img_file:
         col1, col2 = st.columns(2)
         with col1:
-            img = Image.open(image_file)
-            st.image(img, caption='Selected Image', use_column_width='always')
+            st.image(img_file, caption="Selected Image")
         with col2:
-            if image_file is not None and submit:
-                with st.spinner(text="Predicting..."):
-                    # Load model
-
-                    pred = model(image_file)
-                    pred.render()
-                    # save output to file
-                    for im in pred.ims:
-                        im_base64 = Image.fromarray(im)
-                        im_base64.save(os.path.join(
-                            'data/outputs', os.path.basename(image_file)))
-                # Display predicton
-                img_ = Image.open(os.path.join(
-                    'data/outputs', os.path.basename(image_file)))
-                st.image(img_, caption='Model Prediction(s)')
+            img = infer_image(img_file)
+            st.image(img, caption="Model prediction")
 
 
-def videoInput(model, src):
-    if src == 'Upload your own data.':
-        uploaded_video = st.file_uploader(
-            "Upload A Video", type=['mp4', 'mpeg', 'mov'])
-        pred_view = st.empty()
-        warning = st.empty()
-        if uploaded_video != None:
+def video_input(data_src):
+    vid_file = None
+    if data_src == 'Sample data':
+        vid_file = "data/sample_videos/sample.mp4"
+    else:
+        vid_bytes = st.sidebar.file_uploader("Upload a video", type=['mp4', 'mpv', 'avi'])
+        if vid_bytes:
+            vid_file = "data/uploaded_data/upload." + vid_bytes.name.split('.')[-1]
+            with open(vid_file, 'wb') as out:
+                out.write(vid_bytes.read())
 
-            # Save video to disk
-            ts = datetime.timestamp(datetime.now())  # timestamp a upload
-            uploaded_video_path = os.path.join(
-                'data/uploads', str(ts)+uploaded_video.name)
-            with open(uploaded_video_path, mode='wb') as f:
-                f.write(uploaded_video.read())
+    if vid_file:
+        cap = cv2.VideoCapture(vid_file)
+        custom_size = st.sidebar.checkbox("Custom frame size")
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        if custom_size:
+            width = st.sidebar.number_input("Width", min_value=120, step=20, value=width)
+            height = st.sidebar.number_input("Height", min_value=120, step=20, value=height)
 
-            # Display uploaded video
-            with open(uploaded_video_path, 'rb') as f:
-                video_bytes = f.read()
-            st.video(video_bytes)
-            st.write("Uploaded Video")
-            submit = st.button("Run Prediction")
-            if submit:
-                runVideo(model, uploaded_video_path, pred_view, warning)
+        fps = 0
+        st1, st2, st3 = st.columns(3)
+        with st1:
+            st.markdown("## Height")
+            st1_text = st.markdown(f"{height}")
+        with st2:
+            st.markdown("## Width")
+            st2_text = st.markdown(f"{width}")
+        with st3:
+            st.markdown("## FPS")
+            st3_text = st.markdown(f"{fps}")
 
-    elif src == 'From example data.':
-        # Image selector slider
-        videopaths = glob.glob('data/example_videos/*')
-        if len(videopaths) == 0:
-            st.error(
-                'No videos found, Please upload example videos in data/example_videos', icon="⚠️")
-            return
-        imgsel = st.slider('Select random video from example data.',
-                           min_value=1, max_value=len(videopaths), step=1)
-        pred_view = st.empty()
-        video = videopaths[imgsel-1]
-        submit = st.button("Predict!")
-        if submit:
-            runVideo(model, video, pred_view, warning)
+        st.markdown("---")
+        output = st.empty()
+        prev_time = 0
+        curr_time = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                st.write("Can't read frame, stream ended? Exiting ....")
+                break
+            frame = cv2.resize(frame, (width, height))
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            output_img = infer_image(frame)
+            output.image(output_img)
+            curr_time = time.time()
+            fps = 1 / (curr_time - prev_time)
+            prev_time = curr_time
+            st1_text.markdown(f"**{height}**")
+            st2_text.markdown(f"**{width}**")
+            st3_text.markdown(f"**{fps:.2f}**")
 
+        cap.release()
+
+
+def infer_image(img, size=None):
+    model.conf = confidence
+    result = model(img, size=size) if size else model(img)
+    result.render()
+    image = Image.fromarray(result.ims[0])
+    return image
+
+
+@st.experimental_singleton
+def load_model(path, device):
+    model_ = torch.hub.load('ultralytics/yolov5', 'custom', path=path, force_reload=True)
+    model_.to(device)
+    print("model to ", device)
+    return model_
+
+
+@st.experimental_singleton
+def download_model(url):
+    model_file = wget.download(url, out="models")
+    return model_file
+
+
+def get_user_model():
+    model_src = st.sidebar.radio("Model source", ["file upload", "url"])
+    model_file = None
+    if model_src == "file upload":
+        model_bytes = st.sidebar.file_uploader("Upload a model file", type=['pt'])
+        if model_bytes:
+            model_file = "models/uploaded_" + model_bytes.name
+            with open(model_file, 'wb') as out:
+                out.write(model_bytes.read())
+    else:
+        url = st.sidebar.text_input("model url")
+        if url:
+            model_file_ = download_model(url)
+            if model_file_.split(".")[-1] == "pt":
+                model_file = model_file_
+
+    return model_file
 
 def main():
-    if CFG_ENABLE_URL_DOWNLOAD:
-        downloadModel()
-        
+    # global variables
+    global model, confidence, cfg_model_path
+
+    st.title("Object Recognition Dashboard")
+
+    st.sidebar.title("Settings")
+
+    # upload model
+    model_src = st.sidebar.radio("Select yolov5 weight file", ["Use our demo model 5s", "Use your own model"])
+    # URL, upload file (max 200 mb)
+    if model_src == "Use your own model":
+        user_model_path = get_user_model()
+        if user_model_path:
+            cfg_model_path = user_model_path
+
+        st.sidebar.text(cfg_model_path.split("/")[-1])
+        st.sidebar.markdown("---")
+
+    # check if model file is available
+    if not os.path.isfile(cfg_model_path):
+        st.warning("Model file not available!!!, please added to the model folder.", icon="⚠️")
     else:
-        if not os.path.exists(CFG_MODEL_PATH):
-            st.error(
-                'Model not found, please config if you wish to download model from url set `cfg_enable_url_download = True`  ', icon="⚠️")
+        # device options
+        if torch.cuda.is_available():
+            device_option = st.sidebar.radio("Select Device", ['cpu', 'cuda'], disabled=False, index=0)
+        else:
+            device_option = st.sidebar.radio("Select Device", ['cpu', 'cuda'], disabled=True, index=0)
 
-    # -- Sidebar
-    st.sidebar.title('⚙️ Options')
-    datasrc = st.sidebar.radio("Select input source.", [
-                               'From example data.', 'Upload your own data.'])
+        # load model
+        model = load_model(cfg_model_path, device_option)
 
-    if CFG_ENABLE_VIDEO_PREDICTION:
-        option = st.sidebar.radio("Select input type.", ['Image', 'Video'])
-    else:
-        option = st.sidebar.radio("Select input type.", ['Image'])
-    if torch.cuda.is_available():
-        deviceoption = st.sidebar.radio("Select compute Device.", [
-                                        'cpu', 'cuda'], disabled=False, index=1)
-    else:
-        deviceoption = st.sidebar.radio("Select compute Device.", [
-                                        'cpu', 'cuda'], disabled=True, index=0)
-    # -- End of Sidebar
+        # confidence slider
+        confidence = st.sidebar.slider('Confidence', min_value=0.1, max_value=1.0, value=.45)
 
-    st.header('📦 YOLOv5 Streamlit Deployment Example')
-    st.sidebar.markdown(
-        "https://github.com/thepbordin/Obstacle-Detection-for-Blind-people-Deployment")
+        # custom classes
+        if st.sidebar.checkbox("Custom Classes"):
+            model_names = list(model.names.values())
+            assigned_class = st.sidebar.multiselect("Select Classes", model_names, default=[model_names[0]])
+            classes = [model_names.index(name) for name in assigned_class]
+            model.classes = classes
+        else:
+            model.classes = list(model.names.keys())
 
-    if option == "Image":
-        imageInput(loadmodel(deviceoption), datasrc)
-    elif option == "Video":
-        videoInput(loadmodel(deviceoption), datasrc)
+        st.sidebar.markdown("---")
 
+        # input options
+        input_option = st.sidebar.radio("Select input type: ", ['image', 'video'])
 
-# Downlaod Model from url.
-@st.cache_resource
-def downloadModel():
-    if not os.path.exists(CFG_MODEL_PATH):
-        wget.download(url, out="models/")
-        
+        # input src option
+        data_src = st.sidebar.radio("Select input source: ", ['Sample data', 'Upload your own data'])
 
-@st.cache_resource
-def loadmodel(device):
-    if CFG_ENABLE_URL_DOWNLOAD:
-        CFG_MODEL_PATH = f"models/{url.split('/')[-1:][0]}"
-    model = torch.hub.load('ultralytics/yolov5', 'custom',
-                           path=CFG_MODEL_PATH, force_reload=True, device=device)
-    return model
+        if input_option == 'image':
+            image_input(data_src)
+        else:
+            video_input(data_src)
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    try:
+        main()
+    except SystemExit:
+        pass
+

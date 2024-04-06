@@ -4,7 +4,7 @@
 # Base ----------------------------------------
 matplotlib>=3.2.2
 numpy>=1.18.5
-opencv-python
+opencv-python-headless
 Pillow>=7.1.2
 PyYAML>=5.3.1
 requests>=2.23.0
@@ -13,6 +13,11 @@ torch>=1.7.0
 torchvision>=0.8.1
 tqdm>=4.41.0
 protobuf<4.21.5  # https://github.com/ultralytics/yolov5/issues/8012
+streamlit==1.33.0
+wget==3.2
+torch~=2.2.2
+opencv-python==4.9.0.80
+ultralytics==8.1.43
 
 # Plotting ------------------------------------
 pandas>=1.1.4
@@ -23,6 +28,3 @@ seaborn>=0.11.0
 ipython  # interactive notebook
 psutil  # system utilization
 thop  # FLOPs computation
-streamlit
-wget
-ultralytics
